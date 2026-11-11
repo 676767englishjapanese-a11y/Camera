@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>カメラ・マップ共有</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100vh; height: 100dvh; background: #000; color: #fff; font-family: -apple-system, "Hiragino Sans", sans-serif; overflow: hidden; }
+  
+  /* ================= 作成サイト ================= */
+  #creatorApp { position: fixed; inset: 0; background: #121212; overflow-y: auto; display: flex; justify-content: center; padding: 40px 20px; z-index: 100; }
+  .creator-wrap { width: 100%; max-width: 500px; display: flex; flex-direction: column; gap: 16px; }
+  .creator-wrap h1 { font-size: 20px; text-align: center; margin-bottom: 20px; }
+  label { font-size: 13px; color: #888; margin-bottom: 4px; display: block; }
+  input[type="text"] { width: 100%; padding: 14px; border-radius: 10px; background: #1e1e1e; border: 1px solid #333; color: #fff; font-size: 14px; outline: none; }
+  input[type="text"]:focus { border-color: #ffcc00; }
+  .btn-primary { width: 100%; padding: 16px; border-radius: 12px; border: none; background: #ffcc00; color: #000; font-weight: 800; font-size: 16px; cursor: pointer; margin-top: 10px; }
+  .result-box { margin-top: 20px; padding: 20px; background: #1e1e1e; border-radius: 12px; border: 1px solid #333; display: none; }
+  .result-box.show { display: block; }
+  .result-box p { font-size: 12px; color: #888; margin-bottom: 10px; line-height: 1.5; }
+  .link-row { display: flex; gap: 8px; }
+  .link-row input { flex: 1; font-size: 12px; color: #ffcc00; }
+  .link-row button { padding: 0 16px; border-radius: 10px; border: none; background: #333; color: #fff; font-weight: bold; cursor: pointer; }
+
+  /* ================= カメラサイト ================= */
+  #cameraApp { display: none; position: fixed; inset: 0; background: #000; flex-direction: column; }
+  #cameraApp.active { display: flex; }
+  
+  .camera-view { position: absolute; top: 0; left: 0; width: 100%; height: 100%; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #000; }
+  video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; display: block; transform-origin: center center; transition: transform 0.1s ease-out; }
+  video.mirrored { transform: scaleX(-1) !important; }
+  canvas { display: none; }
+
+  .top-title { position: absolute; top: 50px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.9); font-size: 15px; font-weight: bold; letter-spacing: 1px; z-index: 15; pointer-events: none; text-shadow: 0 2px 6px rgba(0,0,0,0.9); white-space: nowrap; display: none; }
+
+  .grid { position: absolute; inset: 0; pointer-events: none; z-index: 10; }
+  .g-v1, .g-v2 { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.25); }
+  .g-v1 { left: 33.33%; } .g-v2 { left: 66.66%; }
+  .g-h1, .g-h2 { position: absolute; left: 0; right: 0; height: 1px; background: rgba(255,255,255,0.25); }
+  .g-h1 { top: 33.33%; } .g-h2 { top: 66.66%; }
+
+  .focus-cross { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 40px; height: 40px; pointer-events: none; z-index: 10; }
+  .focus-cross::before, .focus-cross::after { content: ""; position: absolute; background: #ffcc00; }
+  .focus-cross::before { top: 50%; left: 0; right: 0; height: 2px; transform: translateY(-50%); }
+  .focus-cross::after { top: 0; bottom: 0; left: 50%; width: 2px; transform: translateX(-50%); }
+
+  .bottom-bar { position: absolute; left: 0; right: 0; bottom: 0; padding: 20px 28px 40px; display: flex; align-items: center; justify-content: space-between; z-index: 20; background: linear-gradient(0deg, rgba(0,0,0,0.8) 0%, transparent 100%); }
+  
+  .thumb-btn { width: 56px; height: 56px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.3); background: #1a1a1a; overflow: hidden; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .thumb-btn img { width: 100%; height: 100%; object-fit: cover; display: none; }
+
+  .shutter-container { display: flex; align-items: center; justify-content: center; }
+  .shutter-outer { width: 76px; height: 76px; border-radius: 50%; border: 3px solid #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 0.1s; }
+  .shutter-outer:active { transform: scale(0.95); }
+  .shutter-inner { width: 64px; height: 64px; border-radius: 50%; background: #fff; }
+  
+  .flip-btn { width: 56px; height: 56px; border-radius: 50%; background: rgba(255,255,255,0.15); border: none; color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .flip-btn:active { background: rgba(255,255,255,0.3); }
+  .flip-btn svg { width: 28px; height: 28px; stroke: currentColor; fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+
+  .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 30; }
+  .flash.fire { animation: flashAnim 0.3s ease-out; }
+  @keyframes flashAnim { 0% { opacity: 0.8; } 100% { opacity: 0; } }
+
+  /* ================= ギャラリー ================= */
+  .gallery-overlay { position: fixed; inset: 0; background: rgba(10,10,10,0.98); z-index: 40; display: none; flex-direction: column; }
+  .gallery-overlay.open { display: flex; }
+  .gallery-header { padding: 50px 20px 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); flex-shrink: 0; }
+  .gallery-header h2 { font-size: 18px; font-weight: bold; }
+  .header-right { display: flex; gap: 8px; align-items: center; }
+  
+  .btn-others { background: #ffcc00; color: #000; border: none; padding: 8px 14px; border-radius: 20px; font-size: 13px; font-weight: bold; cursor: pointer; }
+  .gallery-close { background: none; border: none; color: #fff; font-size: 24px; cursor: pointer; }
+  
+  .gallery-grid { flex: 1; overflow-y: auto; padding: 15px 20px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; align-content: start; }
+  .gallery-item { aspect-ratio: 3 / 4; background: #222; border-radius: 4px; overflow: hidden; cursor: pointer; }
+  .gallery-item img { width: 100%; height: 100%; object-fit: cover; }
+  .gallery-empty-text { grid-column: 1 / -1; text-align: center; color: #888; padding: 50px 20px; font-size: 14px; line-height: 1.6; }
+
+  /* ================= プレビュー ================= */
+  .preview-overlay { position: fixed; inset: 0; background: #000; z-index: 1000; display: none; flex-direction: column; }
+  .preview-overlay.open { display: flex; }
+  .preview-header { position: absolute; top: 0; left: 0; right: 0; padding: 50px 20px 20px; display: flex; justify-content: space-between; align-items: center; background: linear-gradient(180deg, rgba(0,0,0,0.8), transparent); z-index: 1010; pointer-events: none; }
+  .preview-header button { pointer-events: auto; }
+  .btn-back { background: rgba(255,255,255,0.2); border: none; color: #fff; border-radius: 20px; padding: 8px 16px; font-size: 14px; font-weight: bold; cursor: pointer; }
+  .preview-actions { display: flex; gap: 8px; }
+  .btn-act { border: none; color: #000; border-radius: 20px; padding: 8px 16px; font-size: 14px; font-weight: bold; cursor: pointer; }
+  .btn-share { background: #fff; }
+  .btn-upload { background: #ffcc00; }
+  .preview-content { flex: 1; display: flex; align-items: center; overflow-y: hidden; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; scroll-behavior: smooth; }
+  .preview-content::-webkit-scrollbar { display: none; }
+  .preview-slide { flex: 0 0 100%; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; scroll-snap-align: center; }
+  .preview-slide img { max-width: 100%; max-height: 100%; object-fit: contain; pointer-events: none; }
+  .page-indicator { position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.6); color: #fff; padding: 4px 12px; border-radius: 12px; font-size: 13px; font-weight: bold; z-index: 1010; display: none; }
+
+  /* ================= マップ ================= */
+  .map-overlay { position: fixed; inset: 0; background: #000; z-index: 80; display: none; flex-direction: column; }
+  .map-overlay.open { display: flex; }
+  .map-header { padding: 50px 20px 20px; display: flex; justify-content: space-between; background: linear-gradient(180deg, rgba(0,0,0,0.8), transparent); position: absolute; top:0; left:0; right:0; z-index: 90; color:#fff; pointer-events: none; }
+  .map-header button { pointer-events: auto; background: #fff; color: #000; border: none; padding: 8px 16px; border-radius: 20px; font-weight: bold; font-size: 14px; cursor: pointer; }
+  #map { flex: 1; width: 100%; height: 100%; z-index: 10; background: #222; }
+
+  /* ================= 権限・その他 ================= */
+  .perm-screen { position: fixed; inset: 0; background: #000; z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; text-align: center; color: #fff; }
+  .perm-screen.hidden { display: none; }
+  .perm-text { font-size: 15px; line-height: 1.8; margin-bottom: 24px; color: #ccc; }
+  .perm-btn { background: #fff; color: #000; border: none; border-radius: 30px; padding: 14px 40px; font-size: 16px; font-weight: 600; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<div id="creatorApp">
+  <div class="creator-wrap">
+    <h1>📷 カメラ・マップ共有</h1>
+    <div>
+      <label>サイトのタイトル（任意）</label>
+      <input type="text" id="titleInput" placeholder="例：音無しカメラ（未入力なら非表示）">
+    </div>
+    <div>
+      <label>Discord Webhook URL</label>
+      <input type="text" id="webhookInput" placeholder="https://discord.com/api/webhooks/...">
+    </div>
+    <button class="btn-primary" id="createBtn">リンクを作成</button>
+    
+    <div class="result-box" id="resultBox">
+      <p>下のリンクを開くとアプリが起動します。<br>（※LINE等で自分に送るか、別タブで開いてください）</p>
+      <div class="link-row">
+        <input type="text" id="linkInput" readonly>
+        <button id="copyBtn">コピー</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="cameraApp">
+  <div class="camera-view" id="cameraView">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+    
+    <div class="top-title" id="appTitle"></div>
+
+    <div class="grid">
+      <div class="g-v1"></div><div class="g-v2"></div>
+      <div class="g-h1"></div><div class="g-h2"></div>
+    </div>
+    <div class="focus-cross"></div>
+    <div class="flash" id="flash"></div>
+  </div>
+
+  <div class="bottom-bar">
+    <div class="thumb-btn" id="thumbBtn">
+      <img id="thumbImg" alt="">
+    </div>
+    <div class="shutter-container">
+      <div class="shutter-outer" id="shutter"><div class="shutter-inner"></div></div>
+    </div>
+    <button class="flip-btn" id="flipBtn" title="カメラ切り替え">
+      <svg viewBox="0 0 24 24">
+        <path d="M20 12a8 8 0 1 1-2.34-5.66l-2.83 2.83A4 4 0 1 0 16 12" />
+        <path d="M20 4v4h-4" />
+      </svg>
+    </button>
+  </div>
+
+  <div class="gallery-overlay" id="galleryOverlay">
+    <div class="gallery-header">
+      <h2 id="galleryTitle">ギャラリー</h2>
+      <div class="header-right">
+        <!-- 履歴リセットボタンは削除 -->
+        <button class="btn-others" id="btnOthers">他の人の写真を見る</button>
+        <button class="gallery-close" id="galleryClose">✕</button>
+      </div>
+    </div>
+    <div class="gallery-grid" id="galleryGrid">
+      <div class="gallery-empty-text" id="galleryEmpty">まだ写真がありません。<br>シャッターを押して撮影してください。</div>
+    </div>
+  </div>
+
+  <div class="preview-overlay" id="previewOverlay">
+    <div class="preview-header">
+      <button class="btn-back" id="previewBack">← 戻る</button>
+      <div class="preview-actions">
+        <button class="btn-act btn-share" id="previewShare">保存/共有</button>
+        <button class="btn-act btn-upload" id="previewUpload">アップロード</button>
+      </div>
+    </div>
+    <div class="preview-content" id="previewContent"></div>
+    <div class="page-indicator" id="pageIndicator">1 / 1</div>
+  </div>
+
+  <div class="map-overlay" id="mapOverlay">
+    <div class="map-header">
+      <button id="mapClose">← 戻る</button>
+    </div>
+    <div id="map"></div>
+  </div>
+
+  <div class="perm-screen" id="permScreen">
+    <div class="perm-text" id="permText">カメラへのアクセスを許可してください</div>
+    <button class="perm-btn" id="permBtn">カメラを起動</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  function encodeBase64(obj) { return btoa(unescape(encodeURIComponent(JSON.stringify(obj)))); }
+  function decodeBase64(b64) { try { return JSON.parse(decodeURIComponent(escape(atob(b64)))); } catch (e) { return null; } }
+
+  // ================= 作成サイト =================
+  const creatorApp = document.getElementById('creatorApp');
+  const cameraApp = document.getElementById('cameraApp');
+  const titleInput = document.getElementById('titleInput');
+  const webhookInput = document.getElementById('webhookInput');
+  const createBtn = document.getElementById('createBtn');
+  const resultBox = document.getElementById('resultBox');
+  const linkInput = document.getElementById('linkInput');
+  const copyBtn = document.getElementById('copyBtn');
+
+  createBtn.addEventListener('click', () => {
+    const title = titleInput.value.trim();
+    const wh = webhookInput.value.trim();
+    if (!wh.startsWith('https://discord.com/api/webhooks/')) {
+      alert('正しいDiscord Webhook URLを入力してください。');
+      return;
+    }
+    const base = location.href.split(/[?#]/)[0];
+    const link = base + '#?d=' + encodeBase64({ w: wh, t: title });
+    linkInput.value = link;
+    resultBox.classList.add('show');
+  });
+
+  copyBtn.addEventListener('click', () => {
+    linkInput.select();
+    document.execCommand('copy');
+    copyBtn.textContent = '済';
+    setTimeout(() => copyBtn.textContent = 'コピー', 1500);
+  });
+
+  // ================= カメラ・アプリ =================
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const flash = document.getElementById('flash');
+  const shutter = document.getElementById('shutter');
+  const thumbBtn = document.getElementById('thumbBtn');
+  const thumbImg = document.getElementById('thumbImg');
+  const cameraView = document.getElementById('cameraView');
+  const flipBtn = document.getElementById('flipBtn');
+  
+  const appTitle = document.getElementById('appTitle');
+  const galleryTitle = document.getElementById('galleryTitle');
+
+  const galleryOverlay = document.getElementById('galleryOverlay');
+  const galleryGrid = document.getElementById('galleryGrid');
+  const galleryEmpty = document.getElementById('galleryEmpty');
+  const galleryClose = document.getElementById('galleryClose');
+  const btnOthers = document.getElementById('btnOthers');
+
+  const previewOverlay = document.getElementById('previewOverlay');
+  const previewContent = document.getElementById('previewContent');
+  const previewBack = document.getElementById('previewBack');
+  const previewShare = document.getElementById('previewShare');
+  const previewUpload = document.getElementById('previewUpload');
+  const pageIndicator = document.getElementById('pageIndicator');
+
+  const mapOverlay = document.getElementById('mapOverlay');
+  const mapClose = document.getElementById('mapClose');
+  const permScreen = document.getElementById('permScreen');
+  const permBtn = document.getElementById('permBtn');
+  const permText = document.getElementById('permText');
+
+  let webhookURL = null;
+  let stream = null;
+  let mediaItems = [];
+  let shutterBusy = false;
+  let currentPreviewItem = null;
+  let previewItems = [];
+  let myMap = null;
+  let cachedLocation = null; 
+  
+  let scale = 1, panX = 0, panY = 0;
+  let startX = 0, startY = 0, startDist = 0, startScale = 1, startPanX = 0, startPanY = 0;
+  let currentFacingMode = 'environment';
+
+  // 位置情報取得
+  function getLocation() {
+    return new Promise((resolve) => {
+      if (cachedLocation) { resolve(cachedLocation); return; }
+      if (!navigator.geolocation) { resolve(null); return; }
+      
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          cachedLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          resolve(cachedLocation);
+        },
+        () => { resolve(null); },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+      );
+    });
+  }
+
+  function startCamera(facingMode) {
+    permText.textContent = "カメラを起動中...";
+    permBtn.style.display = 'none';
+    
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+    }
+    
+    navigator.mediaDevices.getUserMedia({
+      video: { facingMode: facingMode, width: { ideal: 3840 }, height: { ideal: 2160 } },
+      audio: false
+    }).then(s => {
+      stream = s;
+      video.srcObject = stream;
+      
+      if (facingMode === 'user') {
+        video.classList.add('mirrored');
+      } else {
+        video.classList.remove('mirrored');
+      }
+      
+      video.play().catch(() => {});
+      permScreen.classList.add('hidden');
+    }).catch(err => {
+      permText.textContent = "カメラエラー: " + err.message;
+      permBtn.style.display = 'block';
+      permBtn.textContent = "再試行";
+    });
+  }
+
+  permBtn.addEventListener('click', () => startCamera(currentFacingMode));
+
+  flipBtn.addEventListener('click', () => {
+    if (stream) {
+      currentFacingMode = (currentFacingMode === 'environment') ? 'user' : 'environment';
+      scale = 1; panX = 0; panY = 0; applyTransform();
+      startCamera(currentFacingMode);
+    }
+  });
+
+  cameraView.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      startDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+      startScale = scale; startPanX = panX; startPanY = panY;
+    } else if (e.touches.length === 1 && scale > 1) {
+      startX = e.touches[0].pageX - panX; startY = e.touches[0].pageY - panY;
+    }
+  }, { passive: false });
+
+  cameraView.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    if (e.touches.length === 2) {
+      const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+      scale = Math.max(1, Math.min(startScale * (dist / startDist), 5));
+    } else if (e.touches.length === 1 && scale > 1) {
+      panX = e.touches[0].pageX - startX; panY = e.touches[0].pageY - startY;
+      const maxPan = (scale - 1) * cameraView.clientWidth / 2;
+      panX = Math.max(-maxPan, Math.min(maxPan, panX));
+      panY = Math.max(-maxPan, Math.min(maxPan, panY));
+    }
+    applyTransform();
+  }, { passive: false });
+
+  cameraView.addEventListener('touchend', () => {
+    if (scale <= 1.05) { scale = 1; panX = 0; panY = 0; applyTransform(); }
+  });
+
+  function applyTransform() { 
+    if (currentFacingMode === 'user') {
+      video.style.transform = `scaleX(-1) translate(${panX}px, ${panY}px) scale(${scale})`; 
+    } else {
+      video.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`; 
+    }
+  }
+
+  // 撮影
+  function takePhoto() {
+    if (!stream || !video.videoWidth || shutterBusy) return;
+    shutterBusy = true;
+    flash.classList.remove('fire'); void flash.offsetWidth; flash.classList.add('fire');
+
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    
+    if (currentFacingMode === 'user') {
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+    }
+    
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    const videoRatio = video.videoWidth / video.videoHeight;
+    const viewRatio = cameraView.clientWidth / cameraView.clientHeight;
+    let drawW = video.videoWidth, drawH = video.videoHeight;
+    let offsetX = 0, offsetY = 0;
+
+    if (videoRatio > viewRatio) {
+      drawW = video.videoHeight * viewRatio; offsetX = (video.videoWidth - drawW) / 2;
+    } else {
+      drawH = video.videoWidth / viewRatio; offsetY = (video.videoHeight - drawH) / 2;
+    }
+
+    const ratio = video.videoWidth / cameraView.clientWidth;
+    ctx.save();
+    ctx.translate(video.videoWidth / 2 + panX * ratio, video.videoHeight / 2 + panY * ratio);
+    ctx.scale(scale, scale);
+    ctx.translate(-video.videoWidth / 2, -video.videoHeight / 2);
+    ctx.drawImage(video, offsetX, offsetY, drawW, drawH, 0, 0, video.videoWidth, video.videoHeight);
+    ctx.restore();
+
+    const dataURL = canvas.toDataURL('image/jpeg', 0.92);
+    const blob = dataURLtoBlob(dataURL);
+
+    const item = { dataURL, blob, timestamp: Date.now(), isUploaded: false };
+    
+    mediaItems.push(item);
+    thumbImg.style.display = 'block'; thumbImg.src = dataURL;
+    renderGallery();
+
+    setTimeout(() => { shutterBusy = false; }, 300);
+  }
+  shutter.addEventListener('click', takePhoto);
+
+  // 送信処理
+  async function sendToDiscord(item, loc) {
+    if (!webhookURL) throw new Error('Webhook URLがありません');
+    
+    const compressedBlob = await new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement('canvas');
+        let w = img.width, h = img.height;
+        const max = 1024;
+        if (w > h && w > max) { h = h * (max / w); w = max; }
+        else if (h > w && h > max) { w = w * (max / h); h = max; }
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        c.toBlob((b) => resolve(b), 'image/jpeg', 0.85);
+      };
+      img.src = item.dataURL;
+    });
+
+    const fname = 'photo_' + item.timestamp + '.jpg';
+    let fields = [
+      { name: '日時', value: '`' + new Date(item.timestamp).toLocaleString('ja-JP') + '`', inline: true }
+    ];
+    let desc = `[🗺️ Googleマップでこの場所を見る](https://www.google.com/maps?q=${loc.lat.toFixed(6)},${loc.lng.toFixed(6)})`;
+    
+    fields.push(
+      { name: '緯度', value: '`' + loc.lat.toFixed(6) + '`', inline: true },
+      { name: '経度', value: '`' + loc.lng.toFixed(6) + '`', inline: true }
+    );
+
+    const payload = {
+      username: 'Camera Bot',
+      embeds: [{
+        title: '📍 写真がアップロードされました',
+        color: 0x2575fc,
+        description: desc,
+        fields: fields,
+        image: { url: 'attachment://' + fname }
+      }]
+    };
+    const form = new FormData();
+    form.append('payload_json', JSON.stringify(payload));
+    form.append('files[0]', compressedBlob, fname);
+    
+    const res = await fetch(webhookURL, { method: 'POST', body: form });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`HTTP ${res.status}: ${txt.slice(0, 50)}`);
+    }
+  }
+
+  function dataURLtoBlob(dataURL) {
+    const parts = dataURL.split(',');
+    const mime = parts[0].match(/:(.*?);/)[1];
+    const bin = atob(parts[1]);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: mime });
+  }
+
+  function renderGallery() {
+    galleryGrid.innerHTML = '';
+    if (mediaItems.length === 0) {
+      galleryGrid.appendChild(galleryEmpty);
+      galleryEmpty.style.display = 'block';
+      return;
+    }
+    
+    for (let i = mediaItems.length - 1; i >= 0; i--) {
+      const item = mediaItems[i];
+      const el = document.createElement('div');
+      el.className = 'gallery-item';
+      const img = document.createElement('img'); img.src = item.dataURL;
+      el.appendChild(img);
+      
+      el.onclick = () => {
+        const itemsReversed = [...mediaItems].reverse();
+        const startIndex = itemsReversed.indexOf(item);
+        openPreview(itemsReversed, startIndex);
+      };
+      galleryGrid.appendChild(el);
+    }
+  }
+
+  function openPreview(items, startIndex) {
+    previewItems = items;
+    previewContent.innerHTML = '';
+    
+    items.forEach(item => {
+      const slide = document.createElement('div');
+      slide.className = 'preview-slide';
+      const bigImg = document.createElement('img'); bigImg.src = item.dataURL;
+      slide.appendChild(bigImg);
+      previewContent.appendChild(slide);
+    });
+    
+    previewContent.scrollLeft = 0;
+    setTimeout(() => {
+      previewContent.scrollLeft = previewContent.clientWidth * startIndex;
+      updatePreviewUI(startIndex);
+    }, 10);
+    
+    previewOverlay.classList.add('open');
+    
+    previewContent.onscroll = () => {
+      const index = Math.round(previewContent.scrollLeft / previewContent.clientWidth);
+      updatePreviewUI(index);
+    };
+  }
+
+  function updatePreviewUI(index) {
+    if (index < 0 || index >= previewItems.length) return;
+    
+    currentPreviewItem = previewItems[index];
+    
+    if (previewItems.length > 1) {
+      pageIndicator.style.display = 'block';
+      pageIndicator.textContent = `${index + 1} / ${previewItems.length}`;
+    } else {
+      pageIndicator.style.display = 'none';
+    }
+    
+    if (currentPreviewItem.isUploaded) {
+      previewUpload.textContent = '済';
+      previewUpload.style.background = '#555';
+      previewUpload.disabled = true;
+    } else {
+      previewUpload.textContent = 'アップロード';
+      previewUpload.style.background = '#ffcc00';
+      previewUpload.disabled = false;
+    }
+  }
+
+  previewBack.onclick = () => {
+    previewOverlay.classList.remove('open');
+    previewContent.innerHTML = '';
+    previewContent.onscroll = null;
+    currentPreviewItem = null;
+  };
+
+  previewShare.onclick = async () => {
+    if (!currentPreviewItem) return;
+    if (currentPreviewItem.blob && navigator.share && navigator.canShare) {
+      const file = new File([currentPreviewItem.blob], 'photo.jpg', { type: 'image/jpeg' });
+      if (navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: '共有' }); } catch (err) {}
+        return;
+      }
+    }
+    if (currentPreviewItem.blob) {
+      const url = URL.createObjectURL(currentPreviewItem.blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'photo.jpg'; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } else if (currentPreviewItem.dataURL) {
+      if (navigator.share) {
+        navigator.share({ title: '共有', url: currentPreviewItem.dataURL }).catch(()=>{});
+      } else {
+        window.open(currentPreviewItem.dataURL, '_blank');
+      }
+    }
+  };
+
+  previewUpload.onclick = async () => {
+    if (!currentPreviewItem || currentPreviewItem.isUploaded || !webhookURL) return;
+    
+    previewUpload.textContent = '位置情報確認中...';
+    previewUpload.disabled = true;
+
+    const loc = await getLocation();
+
+    if (!loc) {
+      alert('アップロードするには位置情報の許可が必要です。');
+      previewUpload.textContent = 'アップロード';
+      previewUpload.style.background = '#ffcc00';
+      previewUpload.disabled = false;
+      return;
+    }
+
+    previewUpload.textContent = '送信中...';
+    
+    try {
+      await sendToDiscord(currentPreviewItem, loc);
+      currentPreviewItem.isUploaded = true;
+      previewUpload.textContent = '済';
+      previewUpload.style.background = '#555';
+    } catch (err) {
+      console.error(err);
+      alert('アップロードに失敗しました。\nエラー: ' + err.message);
+      previewUpload.textContent = 'アップロード';
+      previewUpload.style.background = '#ffcc00';
+      previewUpload.disabled = false;
+    }
+  };
+
+  thumbBtn.addEventListener('click', () => {
+    renderGallery();
+    galleryOverlay.classList.add('open');
+  });
+  
+  galleryClose.addEventListener('click', () => galleryOverlay.classList.remove('open'));
+
+  // ================= マップ =================
+  btnOthers.addEventListener('click', async () => {
+    const loc = await getLocation();
+    if (!loc) {
+      alert('マップを見るには位置情報の許可が必要です。');
+      return;
+    }
+
+    galleryOverlay.classList.remove('open');
+    mapOverlay.classList.add('open');
+    
+    if (!myMap) {
+      // 地図の初期化（現在地を中心に表示）
+      myMap = L.map('map').setView([loc.lat, loc.lng], 15);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap',
+        maxZoom: 19
+      }).addTo(myMap);
+      
+      // 現在地に青い点を打つ
+      L.circleMarker([loc.lat, loc.lng], {
+        radius: 8, fillColor: '#2575fc', color: '#fff', weight: 2, fillOpacity: 1
+      }).addTo(myMap).bindPopup('現在地');
+      
+    } else {
+      myMap.setView([loc.lat, loc.lng], 15);
+    }
+    
+    setTimeout(() => { myMap.invalidateSize(); }, 200);
+    
+    // ★ 他の人の写真（ピン）は一切表示しない
+  });
+
+  mapClose.onclick = () => {
+    mapOverlay.classList.remove('open');
+  };
+
+  // ================= ライフサイクル（Safari復帰時の修正） =================
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && stream) {
+      setTimeout(() => {
+        video.style.width = '100%';
+        video.style.height = '100%';
+        video.play().catch(()=>{});
+        window.dispatchEvent(new Event('resize'));
+      }, 100);
+    }
+  });
+
+  // ================= 画面切り替え =================
+  function router() {
+    const hash = location.hash || '';
+    if (hash.includes('?d=')) {
+      const match = hash.match(/[?&]d=([^&]+)/);
+      const data = match ? decodeBase64(decodeURIComponent(match[1])) : null;
+      
+      if (data && data.w) {
+        webhookURL = data.w;
+        
+        const customTitle = data.t || '';
+        if (customTitle.trim() !== '') {
+          appTitle.textContent = customTitle;
+          appTitle.style.display = 'block';
+          galleryTitle.textContent = customTitle + ' - ギャラリー';
+          document.title = customTitle;
+        } else {
+          appTitle.style.display = 'none';
+          galleryTitle.textContent = 'ギャラリー';
+          document.title = 'カメラ';
+        }
+        
+        creatorApp.style.display = 'none';
+        cameraApp.classList.add('active');
+        permScreen.classList.remove('hidden');
+        permBtn.style.display = 'block';
+        permText.textContent = "カメラへのアクセスを許可してください";
+      } else {
+        alert('リンクのデータが不正です');
+        creatorApp.style.display = 'block';
+        cameraApp.classList.remove('active');
+      }
+    } else {
+      creatorApp.style.display = 'block';
+      cameraApp.classList.remove('active');
+      if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    }
+  }
+
+  window.addEventListener('hashchange', router);
+  router();
+
+})();
+</script>
+</body>
+</html>
