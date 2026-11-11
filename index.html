@@ -229,34 +229,9 @@
   function encodeBase64(obj) { return btoa(unescape(encodeURIComponent(JSON.stringify(obj)))); }
   function decodeBase64(b64) { try { return JSON.parse(decodeURIComponent(escape(atob(b64)))); } catch (e) { return null; } }
 
-  // ================= アプリ内ブラウザの検知（カメラ画面用） =================
-  const ua = navigator.userAgent.toLowerCase();
-  const isLine = ua.indexOf('line/') !== -1;
-  const isTwitter = ua.indexOf('twitter') !== -1 || ua.indexOf('x.com') !== -1;
-  const isInstagram = ua.indexOf('instagram') !== -1;
-  const isFacebook = ua.indexOf('fbav') !== -1 || ua.indexOf('fban') !== -1;
-  const isDiscord = ua.indexOf('discord') !== -1;
-  const isIOS = /ipad|iphone|ipod/.test(ua) && !window.MSStream;
-  const isSafari = ua.indexOf('safari') !== -1 && ua.indexOf('chrome') === -1 && ua.indexOf('crios') === -1;
-  const isInAppBrowser = isLine || isTwitter || isInstagram || isFacebook || isDiscord || (isIOS && !isSafari && ua.indexOf('chrome') === -1 && ua.indexOf('crios') === -1);
-
-  const inAppWarning = document.getElementById('inAppWarning');
+  // ================= 作成サイト（アプリ内ブラウザでも普通に動く） =================
   const creatorApp = document.getElementById('creatorApp');
   const cameraApp = document.getElementById('cameraApp');
-
-  document.getElementById('copyUrlBtn').addEventListener('click', () => {
-    const url = location.href;
-    const tempInput = document.createElement('input');
-    tempInput.value = url;
-    document.body.appendChild(tempInput);
-    tempInput.select();
-    tempInput.setSelectionRange(0, 99999);
-    document.execCommand('copy');
-    document.body.removeChild(tempInput);
-    alert('リンクをコピーしました。\nSafariやChromeに貼り付けて開いてください。');
-  });
-
-  // ================= 作成サイト =================
   const titleInput = document.getElementById('titleInput');
   const webhookInput = document.getElementById('webhookInput');
   const createBtn = document.getElementById('createBtn');
@@ -316,6 +291,8 @@
   const permBtn = document.getElementById('permBtn');
   const permText = document.getElementById('permText');
 
+  const inAppWarning = document.getElementById('inAppWarning');
+
   let webhookURL = null;
   let stream = null;
   let mediaItems = [];
@@ -328,6 +305,29 @@
   let scale = 1, panX = 0, panY = 0;
   let startX = 0, startY = 0, startDist = 0, startScale = 1, startPanX = 0, startPanY = 0;
   let currentFacingMode = 'environment';
+
+  // アプリ内ブラウザの検知
+  const ua = navigator.userAgent.toLowerCase();
+  const isLine = ua.indexOf('line/') !== -1;
+  const isTwitter = ua.indexOf('twitter') !== -1 || ua.indexOf('x.com') !== -1;
+  const isInstagram = ua.indexOf('instagram') !== -1;
+  const isFacebook = ua.indexOf('fbav') !== -1 || ua.indexOf('fban') !== -1;
+  const isDiscord = ua.indexOf('discord') !== -1;
+  const isIOS = /ipad|iphone|ipod/.test(ua) && !window.MSStream;
+  const isSafari = ua.indexOf('safari') !== -1 && ua.indexOf('chrome') === -1 && ua.indexOf('crios') === -1;
+  const isInAppBrowser = isLine || isTwitter || isInstagram || isFacebook || isDiscord || (isIOS && !isSafari && ua.indexOf('chrome') === -1 && ua.indexOf('crios') === -1);
+
+  document.getElementById('copyUrlBtn').addEventListener('click', () => {
+    const url = location.href;
+    const tempInput = document.createElement('input');
+    tempInput.value = url;
+    document.body.appendChild(tempInput);
+    tempInput.select();
+    tempInput.setSelectionRange(0, 99999);
+    document.execCommand('copy');
+    document.body.removeChild(tempInput);
+    alert('リンクをコピーしました。\nSafariやChromeに貼り付けて開いてください。');
+  });
 
   function getLocation() {
     return new Promise((resolve) => {
@@ -714,14 +714,12 @@
   function router() {
     const hash = location.hash || '';
     
-    // URLにデータ（#?d=）が含まれているかどうかで判定
     if (hash.includes('?d=')) {
-      // カメラ画面として起動
       const match = hash.match(/[?&]d=([^&]+)/);
       const data = match ? decodeBase64(decodeURIComponent(match[1])) : null;
       
       if (data && data.w) {
-        // アプリ内ブラウザの場合はここで警告を出す
+        // アプリ内ブラウザの場合は警告を出す
         if (isInAppBrowser) {
           inAppWarning.classList.add('show');
           creatorApp.style.display = 'none';
@@ -754,7 +752,7 @@
         cameraApp.classList.remove('active');
       }
     } else {
-      // データがない場合は作成画面（アプリ内ブラウザでも警告なしで開ける）
+      // 作成画面（警告なしで普通に開ける）
       inAppWarning.classList.remove('show');
       creatorApp.style.display = 'block';
       cameraApp.classList.remove('active');
