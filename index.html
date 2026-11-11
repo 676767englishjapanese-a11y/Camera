@@ -25,6 +25,15 @@
   .link-row input { flex: 1; font-size: 12px; color: #ffcc00; }
   .link-row button { padding: 0 16px; border-radius: 10px; border: none; background: #333; color: #fff; font-weight: bold; cursor: pointer; }
 
+  /* ================= アプリ内ブラウザ警告画面 ================= */
+  #inAppWarning { position: fixed; inset: 0; background: #000; z-index: 2000; display: none; flex-direction: column; align-items: center; justify-content: center; padding: 30px; text-align: center; }
+  #inAppWarning.show { display: flex; }
+  .warn-icon { font-size: 50px; margin-bottom: 20px; }
+  .warn-title { font-size: 20px; font-weight: bold; margin-bottom: 16px; color: #ffcc00; }
+  .warn-text { font-size: 14px; line-height: 1.8; color: #ccc; margin-bottom: 30px; }
+  .warn-btn { background: #ffcc00; color: #000; border: none; padding: 15px 40px; border-radius: 30px; font-size: 16px; font-weight: bold; cursor: pointer; width: 100%; max-width: 300px; }
+  .warn-btn:active { transform: scale(0.95); }
+
   /* ================= カメラサイト ================= */
   #cameraApp { display: none; position: fixed; inset: 0; background: #000; flex-direction: column; }
   #cameraApp.active { display: flex; }
@@ -112,6 +121,18 @@
 </head>
 <body>
 
+<!-- アプリ内ブラウザ警告 -->
+<div id="inAppWarning">
+  <div class="warn-icon">⚠️</div>
+  <div class="warn-title">ブラウザで開いてください</div>
+  <div class="warn-text">
+    現在、LINEやX（Twitter）などの<br>アプリ内ブラウザで開かれています。<br><br>
+    カメラや位置情報を正常に動作させるには、<br>下のボタンからリンクをコピーし、<br>
+    <b>Safari</b> や <b>Google Chrome</b> などの<br>ブラウザに貼り付けて開いてください。
+  </div>
+  <button class="warn-btn" id="copyUrlBtn">リンクをコピー</button>
+</div>
+
 <div id="creatorApp">
   <div class="creator-wrap">
     <h1>📷 カメラ・マップ共有</h1>
@@ -169,7 +190,6 @@
     <div class="gallery-header">
       <h2 id="galleryTitle">ギャラリー</h2>
       <div class="header-right">
-        <!-- 履歴リセットボタンは削除 -->
         <button class="btn-others" id="btnOthers">他の人の写真を見る</button>
         <button class="gallery-close" id="galleryClose">✕</button>
       </div>
@@ -208,6 +228,39 @@
 (function () {
   function encodeBase64(obj) { return btoa(unescape(encodeURIComponent(JSON.stringify(obj)))); }
   function decodeBase64(b64) { try { return JSON.parse(decodeURIComponent(escape(atob(b64)))); } catch (e) { return null; } }
+
+  // ================= アプリ内ブラウザの検知 =================
+  const ua = navigator.userAgent.toLowerCase();
+  const isLine = ua.indexOf('line/') !== -1;
+  const isTwitter = ua.indexOf('twitter') !== -1 || ua.indexOf('x.com') !== -1;
+  const isInstagram = ua.indexOf('instagram') !== -1;
+  const isFacebook = ua.indexOf('fbav') !== -1 || ua.indexOf('fban') !== -1;
+  const isDiscord = ua.indexOf('discord') !== -1;
+  
+  // iOSなのにSafariじゃない場合もアプリ内ブラウザと判定（Chrome等は除く）
+  const isIOS = /ipad|iphone|ipod/.test(ua) && !window.MSStream;
+  const isSafari = ua.indexOf('safari') !== -1 && ua.indexOf('chrome') === -1 && ua.indexOf('crios') === -1;
+  
+  // 警告を出すかどうかの判定
+  const isInAppBrowser = isLine || isTwitter || isInstagram || isFacebook || isDiscord || (isIOS && !isSafari && ua.indexOf('chrome') === -1 && ua.indexOf('crios') === -1);
+
+  if (isInAppBrowser) {
+    document.getElementById('inAppWarning').classList.add('show');
+    document.getElementById('creatorApp').style.display = 'none';
+    document.getElementById('cameraApp').classList.remove('active');
+  }
+
+  document.getElementById('copyUrlBtn').addEventListener('click', () => {
+    const url = location.href;
+    const tempInput = document.createElement('input');
+    tempInput.value = url;
+    document.body.appendChild(tempInput);
+    tempInput.select();
+    tempInput.setSelectionRange(0, 99999);
+    document.execCommand('copy');
+    document.body.removeChild(tempInput);
+    alert('リンクをコピーしました。\nSafariやChromeに貼り付けて開いてください。');
+  });
 
   // ================= 作成サイト =================
   const creatorApp = document.getElementById('creatorApp');
@@ -637,14 +690,12 @@
     mapOverlay.classList.add('open');
     
     if (!myMap) {
-      // 地図の初期化（現在地を中心に表示）
       myMap = L.map('map').setView([loc.lat, loc.lng], 15);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; OpenStreetMap',
         maxZoom: 19
       }).addTo(myMap);
       
-      // 現在地に青い点を打つ
       L.circleMarker([loc.lat, loc.lng], {
         radius: 8, fillColor: '#2575fc', color: '#fff', weight: 2, fillOpacity: 1
       }).addTo(myMap).bindPopup('現在地');
@@ -654,8 +705,6 @@
     }
     
     setTimeout(() => { myMap.invalidateSize(); }, 200);
-    
-    // ★ 他の人の写真（ピン）は一切表示しない
   });
 
   mapClose.onclick = () => {
@@ -676,6 +725,9 @@
 
   // ================= 画面切り替え =================
   function router() {
+    // アプリ内ブラウザの場合はここで処理をストップ
+    if (isInAppBrowser) return;
+
     const hash = location.hash || '';
     if (hash.includes('?d=')) {
       const match = hash.match(/[?&]d=([^&]+)/);
