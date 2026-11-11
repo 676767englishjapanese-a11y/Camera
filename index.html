@@ -121,7 +121,7 @@
 </head>
 <body>
 
-<!-- アプリ内ブラウザ警告 -->
+<!-- アプリ内ブラウザ警告（カメラ画面用） -->
 <div id="inAppWarning">
   <div class="warn-icon">⚠️</div>
   <div class="warn-title">ブラウザで開いてください</div>
@@ -229,26 +229,20 @@
   function encodeBase64(obj) { return btoa(unescape(encodeURIComponent(JSON.stringify(obj)))); }
   function decodeBase64(b64) { try { return JSON.parse(decodeURIComponent(escape(atob(b64)))); } catch (e) { return null; } }
 
-  // ================= アプリ内ブラウザの検知 =================
+  // ================= アプリ内ブラウザの検知（カメラ画面用） =================
   const ua = navigator.userAgent.toLowerCase();
   const isLine = ua.indexOf('line/') !== -1;
   const isTwitter = ua.indexOf('twitter') !== -1 || ua.indexOf('x.com') !== -1;
   const isInstagram = ua.indexOf('instagram') !== -1;
   const isFacebook = ua.indexOf('fbav') !== -1 || ua.indexOf('fban') !== -1;
   const isDiscord = ua.indexOf('discord') !== -1;
-  
-  // iOSなのにSafariじゃない場合もアプリ内ブラウザと判定（Chrome等は除く）
   const isIOS = /ipad|iphone|ipod/.test(ua) && !window.MSStream;
   const isSafari = ua.indexOf('safari') !== -1 && ua.indexOf('chrome') === -1 && ua.indexOf('crios') === -1;
-  
-  // 警告を出すかどうかの判定
   const isInAppBrowser = isLine || isTwitter || isInstagram || isFacebook || isDiscord || (isIOS && !isSafari && ua.indexOf('chrome') === -1 && ua.indexOf('crios') === -1);
 
-  if (isInAppBrowser) {
-    document.getElementById('inAppWarning').classList.add('show');
-    document.getElementById('creatorApp').style.display = 'none';
-    document.getElementById('cameraApp').classList.remove('active');
-  }
+  const inAppWarning = document.getElementById('inAppWarning');
+  const creatorApp = document.getElementById('creatorApp');
+  const cameraApp = document.getElementById('cameraApp');
 
   document.getElementById('copyUrlBtn').addEventListener('click', () => {
     const url = location.href;
@@ -263,8 +257,6 @@
   });
 
   // ================= 作成サイト =================
-  const creatorApp = document.getElementById('creatorApp');
-  const cameraApp = document.getElementById('cameraApp');
   const titleInput = document.getElementById('titleInput');
   const webhookInput = document.getElementById('webhookInput');
   const createBtn = document.getElementById('createBtn');
@@ -337,7 +329,6 @@
   let startX = 0, startY = 0, startDist = 0, startScale = 1, startPanX = 0, startPanY = 0;
   let currentFacingMode = 'environment';
 
-  // 位置情報取得
   function getLocation() {
     return new Promise((resolve) => {
       if (cachedLocation) { resolve(cachedLocation); return; }
@@ -429,7 +420,6 @@
     }
   }
 
-  // 撮影
   function takePhoto() {
     if (!stream || !video.videoWidth || shutterBusy) return;
     shutterBusy = true;
@@ -477,7 +467,6 @@
   }
   shutter.addEventListener('click', takePhoto);
 
-  // 送信処理
   async function sendToDiscord(item, loc) {
     if (!webhookURL) throw new Error('Webhook URLがありません');
     
@@ -678,7 +667,6 @@
   
   galleryClose.addEventListener('click', () => galleryOverlay.classList.remove('open'));
 
-  // ================= マップ =================
   btnOthers.addEventListener('click', async () => {
     const loc = await getLocation();
     if (!loc) {
@@ -711,7 +699,6 @@
     mapOverlay.classList.remove('open');
   };
 
-  // ================= ライフサイクル（Safari復帰時の修正） =================
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && stream) {
       setTimeout(() => {
@@ -725,15 +712,23 @@
 
   // ================= 画面切り替え =================
   function router() {
-    // アプリ内ブラウザの場合はここで処理をストップ
-    if (isInAppBrowser) return;
-
     const hash = location.hash || '';
+    
+    // URLにデータ（#?d=）が含まれているかどうかで判定
     if (hash.includes('?d=')) {
+      // カメラ画面として起動
       const match = hash.match(/[?&]d=([^&]+)/);
       const data = match ? decodeBase64(decodeURIComponent(match[1])) : null;
       
       if (data && data.w) {
+        // アプリ内ブラウザの場合はここで警告を出す
+        if (isInAppBrowser) {
+          inAppWarning.classList.add('show');
+          creatorApp.style.display = 'none';
+          cameraApp.classList.remove('active');
+          return;
+        }
+
         webhookURL = data.w;
         
         const customTitle = data.t || '';
@@ -759,6 +754,8 @@
         cameraApp.classList.remove('active');
       }
     } else {
+      // データがない場合は作成画面（アプリ内ブラウザでも警告なしで開ける）
+      inAppWarning.classList.remove('show');
       creatorApp.style.display = 'block';
       cameraApp.classList.remove('active');
       if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
